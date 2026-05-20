@@ -46,7 +46,7 @@ cors = CORS(
        'http://www.fopl.opencodingsociety.com',
        'https://www.fopl.opencodingsociety.com',
    ],
-   methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+   methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 )
 
 # Nginx and Flask-CORS can both set Access-Control-Allow-Origin, causing a duplicate
@@ -68,7 +68,7 @@ def handle_preflight():
         if origin in allowed:
             resp = make_response('', 204)
             resp.headers['Access-Control-Allow-Origin'] = origin
-            resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+            resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
             resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
             resp.headers['Access-Control-Allow-Credentials'] = 'true'
             resp.headers['Access-Control-Max-Age'] = '3600'

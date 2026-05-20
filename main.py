@@ -33,6 +33,7 @@ from api.fopl_book_api import fopl_book_api       # FOPL book CRUD
 from api.fopl_chat_api import fopl_chat_api       # FOPL AI search + chatbot
 from api.fopl_calendar_api import fopl_calendar_api  # FOPL calendar events
 from api.fopl_facematch_api import fopl_facematch_api  # FOPL face match
+from api.fopl_volunteer_api import fopl_volunteer_api  # FOPL volunteer applications
 #from api.announcement import announcement_api ##temporary revert
 
 # database Initialization functions
@@ -41,6 +42,7 @@ from model.fopl_user import FoplUser
 from model.fopl_puzzle import FoplPuzzleStat  # ensures table is created
 from model.fopl_book   import FoplBook  # book catalog model
 from model.fopl_event  import FoplEvent  # calendar events model
+from model.fopl_volunteer import FoplVolunteerApplication  # ensures table is created
 from scripts.fopl_seed import initFoplUsers, initFoplBooks, updateFoplBookPrices  # seed data
 from model.user import Section;
 from model.github import GitHubUser
@@ -97,7 +99,8 @@ app.register_blueprint(fopl_puzzle_api) # FOPL puzzle stats
 app.register_blueprint(fopl_book_api)   # FOPL book CRUD
 app.register_blueprint(fopl_chat_api)   # FOPL AI search + chatbot
 app.register_blueprint(fopl_calendar_api) # FOPL calendar events
-app.register_blueprint(fopl_facematch_api)  # FOPL face match
+app.register_blueprint(fopl_facematch_api)   # FOPL face match
+app.register_blueprint(fopl_volunteer_api)  # FOPL volunteer applications
 # app.register_blueprint(announcement_api) ##temporary revert
 
 # Jokes file initialization
