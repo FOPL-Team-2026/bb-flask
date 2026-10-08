@@ -7,7 +7,6 @@ from flask.cli import AppGroup
 from flask_login import current_user, login_required
 from flask import current_app
 from dotenv import load_dotenv
-
 # import "objects" from "this" project
 from __init__ import app, db, login_manager  # Key Flask objects 
 # API endpoints
@@ -16,6 +15,7 @@ from api.python_exec_api import python_exec_api
 from api.javascript_exec_api import javascript_exec_api
 from api.section import section_api
 from api.persona_api import persona_api
+from api.fopl_connection_api import fopl_connection_api
 from api.pfp import pfp_api
 from api.analytics import analytics_api
 from api.student import student_api
@@ -83,6 +83,7 @@ app.register_blueprint(pfp_api)
 app.register_blueprint(groq_api)
 app.register_blueprint(gemini_api)
 app.register_blueprint(microblog_api)
+app.register_blueprint(fopl_connection_api)
 
 app.register_blueprint(analytics_api)
 app.register_blueprint(student_api)
