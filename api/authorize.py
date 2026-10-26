@@ -21,7 +21,7 @@ def auth_required(roles=None):
       - JWT token authentication is fallback (stateless, works for APIs)
     
     Args:
-        roles: String or list of allowed roles (e.g., "Admin" or ["Admin", "Teacher"])
+        roles: String, list or tuple of allowed roles (e.g., "Admin" or ["Admin", "Teacher"])
                If None, any authenticated user is allowed
     
     Possible error responses:
@@ -46,6 +46,13 @@ def auth_required(roles=None):
             else:
                 token = request.cookies.get(current_app.config.get("JWT_TOKEN_NAME"))
                 if not token:
+                    auth_header = request.headers.get('Authorization', request.headers.get('authorization', '')) or ''
+                    if auth_header.startswith('Bearer '):
+                        token = auth_header.split(' ', 1)[1].strip()
+                    elif auth_header:
+                        token = auth_header.strip()
+
+                if not token:
                     return {
                         "message": "Authentication required. No session or token found.",
                         "data": None,
@@ -56,14 +63,24 @@ def auth_required(roles=None):
                     # Decode the token and retrieve the user data
                     data = jwt.decode(token, current_app.config["SECRET_KEY"], algorithms=["HS256"])
                     user = User.query.filter_by(_uid=data["_uid"]).first()
-                    
+
                     if user is None:
                         return {
                             "message": "Invalid Authentication token!",
                             "data": None,
                             "error": "Unauthorized"
                         }, 401
-                    
+
+                    # Tokens issued before this field existed have no token_version claim
+                    # (treated as 0); reject if it doesn't match the account's current
+                    # value -- i.e. the password has changed since this token was issued.
+                    if data.get("token_version", 0) != (user.token_version or 0):
+                        return {
+                            "message": "Token is no longer valid -- password has changed.",
+                            "data": None,
+                            "error": "Unauthorized"
+                        }, 401
+
                     auth_method = "jwt"
                     # Set the current_user in the global context
                     g.current_user = user
@@ -87,11 +104,18 @@ def auth_required(roles=None):
                         "error": str(e)
                     }, 500
             
-            # At this point, user is authenticated via either session or JWT
+            # An inactive account is not authorized until a Teacher/Admin verifies it.
+            if not user.active:
+                return {
+                    "message": "Account pending verification.",
+                    "data": None,
+                    "error": "Forbidden"
+                }, 403
+
             # Now check role requirements if specified
             if roles:
                 # Normalize roles to list for consistent checking
-                required_roles = roles if isinstance(roles, list) else [roles]
+                required_roles = list(roles) if isinstance(roles, (list, tuple)) else [roles]
                 
                 if user.role not in required_roles:
                     return {

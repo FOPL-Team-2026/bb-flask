@@ -1,5 +1,35 @@
+from api.fopl_connection_api import fopl_connection_api
+
+from api.fopl_auth_api import fopl_auth_api  # FOPL login/register
+
+from api.fopl_admin_api import fopl_admin_api  # FOPL admin dashboard
+
+from api.fopl_puzzle_api import fopl_puzzle_api  # FOPL puzzle stats
+
+from api.fopl_book_api import fopl_book_api       # FOPL book CRUD
+
+from api.fopl_chat_api import fopl_chat_api       # FOPL AI search + chatbot
+
+from api.fopl_calendar_api import fopl_calendar_api  # FOPL calendar events
+
+from api.fopl_facematch_api import fopl_facematch_api  # FOPL face match
+
+from api.fopl_volunteer_api import fopl_volunteer_api  # FOPL volunteer applications
+
+from model.fopl_user import FoplUser
+
+from model.fopl_puzzle import FoplPuzzleStat  # ensures table is created
+
+from model.fopl_book   import FoplBook  # book catalog model
+
+from model.fopl_event  import FoplEvent  # calendar events model
+
+from model.fopl_volunteer import FoplVolunteerApplication  # ensures table is created
+
+from scripts.fopl_seed import initFoplUsers, initFoplBooks, updateFoplBookPrices  # seed data
+
+
 # imports from flask
-from datetime import datetime
 from urllib.parse import urljoin, urlparse
 from flask import abort, redirect, render_template, request, send_from_directory, url_for, jsonify, current_app, g # import render_template from "public" flask libraries
 from flask_login import current_user, login_user, logout_user
@@ -7,43 +37,39 @@ from flask.cli import AppGroup
 from flask_login import current_user, login_required
 from flask import current_app
 from dotenv import load_dotenv
+
 # import "objects" from "this" project
 from __init__ import app, db, login_manager  # Key Flask objects 
+from model.persona import Persona, initPersonas, initPersonaUsers
+from model.presence_schedule import seed_schedules
 # API endpoints
 from api.user import user_api 
 from api.python_exec_api import python_exec_api
 from api.javascript_exec_api import javascript_exec_api
 from api.section import section_api
 from api.persona_api import persona_api
-from api.fopl_connection_api import fopl_connection_api
+from api.skill_snapshot_api import skill_passport_api
 from api.pfp import pfp_api
 from api.analytics import analytics_api
 from api.student import student_api
 from api.groq_api import groq_api
 from api.gemini_api import gemini_api
+from api.ainpc_api import ainpc_api
 from api.microblog_api import microblog_api
 from api.classroom_api import classroom_api
 from api.data_export_import_api import data_export_import_api
+from api.leaderboard import dynamic_api, events_api
 from hacks.joke import joke_api  # Import the joke API blueprint
 from api.post import post_api  # Import the social media post API
-from api.fopl_auth_api import fopl_auth_api  # FOPL login/register
-from api.fopl_admin_api import fopl_admin_api  # FOPL admin dashboard
-from api.fopl_puzzle_api import fopl_puzzle_api  # FOPL puzzle stats
-from api.fopl_book_api import fopl_book_api       # FOPL book CRUD
-from api.fopl_chat_api import fopl_chat_api       # FOPL AI search + chatbot
-from api.fopl_calendar_api import fopl_calendar_api  # FOPL calendar events
-from api.fopl_facematch_api import fopl_facematch_api  # FOPL face match
-from api.fopl_volunteer_api import fopl_volunteer_api  # FOPL volunteer applications
+from api.congrats_api import congrats_api  # Import the congrats API
+from api.profile_game import profile_game_api  # CS Pathway Game profile persistence
+from api.snapshot_proxy import snapshot_proxy
+from api.rfid_api import rfid_api
+from api.presence_api import presence_api
 #from api.announcement import announcement_api ##temporary revert
 
 # database Initialization functions
 from model.user import User, initUsers
-from model.fopl_user import FoplUser
-from model.fopl_puzzle import FoplPuzzleStat  # ensures table is created
-from model.fopl_book   import FoplBook  # book catalog model
-from model.fopl_event  import FoplEvent  # calendar events model
-from model.fopl_volunteer import FoplVolunteerApplication  # ensures table is created
-from scripts.fopl_seed import initFoplUsers, initFoplBooks, updateFoplBookPrices  # seed data
 from model.user import Section;
 from model.github import GitHubUser
 from model.feedback import Feedback
@@ -53,23 +79,19 @@ from api.study import study_api
 from api.feedback_api import feedback_api
 from model.study import Study, initStudies
 from model.classroom import Classroom
-from model.persona import Persona, initPersonas, initPersonaUsers
+from model.skill_snapshot import SkillSnapshot
 from model.post import Post, init_posts
 from model.microblog import MicroBlog, Topic, initMicroblogs
+from model.leaderboard import ScoreCounterEvent, ElementaryLeaderboardEvent
 from hacks.jokes import initJokes 
 # from model.announcement import Announcement ##temporary revert
 
 # server only Views
 
 import os
-import requests
 
 # Load environment variables
 load_dotenv()
-
-app.config['KASM_SERVER'] = os.getenv('KASM_SERVER')
-app.config['KASM_API_KEY'] = os.getenv('KASM_API_KEY')
-app.config['KASM_API_KEY_SECRET'] = os.getenv('KASM_API_KEY_SECRET')
 
 
 
@@ -79,11 +101,12 @@ app.register_blueprint(javascript_exec_api)
 app.register_blueprint(user_api)
 app.register_blueprint(section_api)
 app.register_blueprint(persona_api)
+app.register_blueprint(skill_passport_api)
 app.register_blueprint(pfp_api) 
 app.register_blueprint(groq_api)
 app.register_blueprint(gemini_api)
+app.register_blueprint(ainpc_api)
 app.register_blueprint(microblog_api)
-app.register_blueprint(fopl_connection_api)
 
 app.register_blueprint(analytics_api)
 app.register_blueprint(student_api)
@@ -92,17 +115,35 @@ app.register_blueprint(study_api)
 app.register_blueprint(classroom_api)
 app.register_blueprint(feedback_api)
 app.register_blueprint(data_export_import_api)  # Register the data export/import API
+app.register_blueprint(dynamic_api)  # Register the dynamic leaderboard API
+app.register_blueprint(events_api)  # Register the elementary leaderboard API
 app.register_blueprint(joke_api)  # Register the joke API blueprint
 app.register_blueprint(post_api)  # Register the social media post API
-app.register_blueprint(fopl_auth_api)   # FOPL login/register
-app.register_blueprint(fopl_admin_api)  # FOPL admin dashboard
-app.register_blueprint(fopl_puzzle_api) # FOPL puzzle stats
-app.register_blueprint(fopl_book_api)   # FOPL book CRUD
-app.register_blueprint(fopl_chat_api)   # FOPL AI search + chatbot
-app.register_blueprint(fopl_calendar_api) # FOPL calendar events
-app.register_blueprint(fopl_facematch_api)   # FOPL face match
-app.register_blueprint(fopl_volunteer_api)  # FOPL volunteer applications
+app.register_blueprint(congrats_api)  # Register the congrats message API
+app.register_blueprint(profile_game_api)  # CS Pathway Game profile persistence
+app.register_blueprint(snapshot_proxy)  # Register the snapshot proxy API
+app.register_blueprint(rfid_api)  # Register the RFID attendance API
+app.register_blueprint(presence_api)  # Register the generic presence event API
 # app.register_blueprint(announcement_api) ##temporary revert
+
+app.register_blueprint(fopl_connection_api)
+
+app.register_blueprint(fopl_auth_api)   # FOPL login/register
+
+app.register_blueprint(fopl_admin_api)  # FOPL admin dashboard
+
+app.register_blueprint(fopl_puzzle_api) # FOPL puzzle stats
+
+app.register_blueprint(fopl_book_api)   # FOPL book CRUD
+
+app.register_blueprint(fopl_chat_api)   # FOPL AI search + chatbot
+
+app.register_blueprint(fopl_calendar_api) # FOPL calendar events
+
+app.register_blueprint(fopl_facematch_api)   # FOPL face match
+
+app.register_blueprint(fopl_volunteer_api)  # FOPL volunteer applications
+
 
 # Jokes file initialization
 with app.app_context():
@@ -112,16 +153,35 @@ with app.app_context():
     updateFoplBookPrices()
 
 # Tell Flask-Login the view function name of your login route
-login_manager.login_view = "ocs_login"
+login_manager.login_view = "login"
 
 @login_manager.unauthorized_handler
 def unauthorized_callback():
-    return redirect(url_for('ocs_login', next=request.path))
+    return redirect(url_for('login', next=request.path))
 
 # register URIs for server pages
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    # user_id is the composite "id:token_version" from User.get_id(). A mismatched
+    # token_version means the session predates a password change on this account --
+    # returning None here tells Flask-Login the session is invalid.
+    #
+    # A session issued before this field existed at all has no ":" -- treat that as
+    # token_version "0" (matching a fresh/unchanged account) instead of invalidating
+    # it outright. It still correctly fails below once the account's real
+    # token_version has moved past 0 from an actual password change.
+    if ":" in user_id:
+        raw_id, token_version = user_id.split(":", 1)
+    else:
+        raw_id, token_version = user_id, "0"
+    try:
+        raw_id = int(raw_id)
+    except ValueError:
+        return None
+    user = User.query.get(raw_id)
+    if user is None or str(user.token_version) != token_version:
+        return None
+    return user
 
 @app.context_processor
 def inject_user():
@@ -133,19 +193,15 @@ def is_safe_url(target):
     test_url = urlparse(urljoin(request.host_url, target))
     return test_url.scheme in ('http', 'https') and ref_url.netloc == test_url.netloc
 
-@app.route('/login')
-def fopl_login_page():
-    next_url = request.args.get('next', '')
-    return render_template('fopl_login.html', next=next_url, error=None)
-
-
 @app.route('/ocslogin', methods=['GET', 'POST'])
-def ocs_login():
+def login():
     error = None
     next_page = request.args.get('next', '') or request.form.get('next', '')
     if request.method == 'POST':
         user = User.query.filter_by(_uid=request.form['username']).first()
-        if user and user.is_password(request.form['password']):
+        if user and user.is_password(request.form['password']) and not user.active:
+            error = 'Account pending verification.'
+        elif user and user.is_password(request.form['password']):
             login_user(user)
             if not is_safe_url(next_page):
                 return abort(400)
@@ -157,6 +213,14 @@ def ocs_login():
 @app.route('/studytracker')  # route for the study tracker page
 def studytracker():
     return render_template("studytracker.html")
+
+@app.route('/congrats')
+@login_required
+def congrats():
+    from model.congrats_message import CongratsMessage
+
+    messages = CongratsMessage.get_by_user(current_user.id)
+    return render_template("congrats.html", messages=messages, project="Congrats Messages")
     
 @app.route('/logout')
 def logout():
@@ -179,7 +243,7 @@ def index():
 @login_required
 def u2table():
     users = User.query.all()
-    return render_template("u2table.html", user_data=users)
+    return render_template("u2table.html", user_data=users, role_options=current_user.grantable_roles())
 
 @app.route('/sections/')
 @login_required
@@ -203,6 +267,9 @@ def uploaded_file(filename):
 def delete_user(user_id):
     user = User.query.get(user_id)
     if user:
+        blocker = user.deletion_blocker(current_user)
+        if blocker:
+            return jsonify({'error': blocker[1]}), blocker[0]
         user.delete()
         return jsonify({'message': 'User deleted successfully'}), 200
     return jsonify({'error': 'User not found'}), 404
@@ -210,7 +277,7 @@ def delete_user(user_id):
 @app.route('/users/reset_password/<int:user_id>', methods=['POST'])
 @login_required
 def reset_password(user_id):
-    if current_user.role != 'Admin':
+    if not current_user.is_admin():
         return jsonify({'error': 'Unauthorized'}), 403
     
     user = User.query.get(user_id)
@@ -222,101 +289,10 @@ def reset_password(user_id):
         return jsonify({'message': 'Password reset successfully'}), 200
     return jsonify({'error': 'Password reset failed'}), 500
 
-@app.route('/kasm_users')
-def kasm_users():
-    # Fetch configuration details from environment or app config
-    SERVER = current_app.config.get('KASM_SERVER')
-    API_KEY = current_app.config.get('KASM_API_KEY')
-    API_KEY_SECRET = current_app.config.get('KASM_API_KEY_SECRET')
-
-    # Validate required configurations
-    if not SERVER or not API_KEY or not API_KEY_SECRET:
-        return render_template('error.html', message='KASM keys are missing'), 400
-
-    try:
-        # Prepare API request details
-        url = f"{SERVER}/api/public/get_users"
-        data = {
-            "api_key": API_KEY,
-            "api_key_secret": API_KEY_SECRET
-        }
-
-        # Perform the POST request
-        response = requests.post(url, json=data, timeout=10)  # Added timeout for reliability
-
-        # Validate the API response
-        if response.status_code != 200:
-            return render_template(
-                'error.html', 
-                message='Failed to get users', 
-                code=response.status_code
-            ), response.status_code
-
-        # Parse the users list from the response
-        users = response.json().get('users', [])
-
-        # Process `last_session` and handle potential parsing issues
-        for user in users:
-            last_session = user.get('last_session')
-            try:
-                user['last_session'] = datetime.fromisoformat(last_session) if last_session else None
-            except ValueError:
-                user['last_session'] = None  # Fallback for invalid date formats
-
-        # Sort users by `last_session`, treating `None` as the oldest date
-        sorted_users = sorted(
-            users, 
-            key=lambda x: x['last_session'] or datetime.min, 
-            reverse=True
-        )
-
-        # Render the sorted users in the template
-        return render_template('kasm_users.html', users=sorted_users)
-
-    except requests.RequestException as e:
-        # Handle connection errors or other request exceptions
-        return render_template(
-            'error.html', 
-            message=f"Error connecting to KASM API: {str(e)}"
-        ), 500
-        
-        
-@app.route('/delete_user/<user_id>', methods=['DELETE'])
-def delete_user_kasm(user_id):
-    if current_user.role != 'Admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    SERVER = current_app.config.get('KASM_SERVER')
-    API_KEY = current_app.config.get('KASM_API_KEY')
-    API_KEY_SECRET = current_app.config.get('KASM_API_KEY_SECRET')
-
-    if not SERVER or not API_KEY or not API_KEY_SECRET:
-        return {'message': 'KASM keys are missing'}, 400
-
-    try:
-        # Kasm API to delete a user
-        url = f"{SERVER}/api/public/delete_user"
-        data = {
-            "api_key": API_KEY,
-            "api_key_secret": API_KEY_SECRET,
-            "target_user": {"user_id": user_id},
-            "force": False
-        }
-        response = requests.post(url, json=data)
-
-        if response.status_code == 200:
-            return {'message': 'User deleted successfully'}, 200
-        else:
-            return {'message': 'Failed to delete user'}, response.status_code
-
-    except requests.RequestException as e:
-        return {'message': 'Error connecting to KASM API', 'error': str(e)}, 500
-
-
 @app.route('/update_user/<string:uid>', methods=['PUT'])
 def update_user(uid):
     # Authorization check
-    if current_user.role != 'Admin':
+    if not current_user.is_admin():
         return jsonify({'error': 'Unauthorized'}), 403
 
     # Get the JSON data from the request
@@ -340,6 +316,12 @@ def update_user(uid):
 
 
     
+@app.route('/login')
+def fopl_login_page():
+    next_url = request.args.get('next', '')
+    return render_template('fopl_login.html', next=next_url, error=None)
+
+
 @app.route('/fopl/admin')
 def fopl_admin_dashboard():
     """FOPL admin dashboard — server-rendered."""
@@ -463,6 +445,8 @@ def fopl_db_viewer():
                            row_counts=row_counts)
 
 
+app.add_url_rule("/ocslogin", endpoint="ocs_login", view_func=login, methods=["GET", "POST"])
+
 # Create an AppGroup for custom commands
 custom_cli = AppGroup('custom', help='Custom commands')
 
@@ -473,6 +457,7 @@ def generate_data():
     initMicroblogs()
     initPersonas()
     initPersonaUsers()
+    seed_schedules()  # presence schedules from model/presence_schedules.json
 
 # Register the custom command group with the Flask application
 app.cli.add_command(custom_cli)
