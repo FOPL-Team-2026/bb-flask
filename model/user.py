@@ -1,15 +1,38 @@
 """ database dependencies to support sqliteDB examples """
 from flask import current_app
 from flask_login import UserMixin
-from datetime import date
+from datetime import date, datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.exceptions import BadRequest
 import os
 import json
+import re
 
 from __init__ import app, db
+from model import account_types
 from model.github import GitHubUser
-from model.kasm import KasmUser
+
+""" Password Rule """
+
+# The one password rule for every account. Same as Spring's Person.checkPassword()
+# and pages' assets/js/api/passwordRules.js: 8+ characters with an uppercase letter,
+# a lowercase letter, a number, and one of ` ~ ! @ # $ % ^ & * ( )
+PASSWORD_RULE = 'Password needs 8+ characters with an uppercase letter, a lowercase letter, a number, and one of ` ~ ! @ # $ % ^ & * ( )'
+_PASSWORD_CHECKS = (r'[A-Z]', r'[a-z]', r'[0-9]', r'[`~!@#$%^&*()]')
+
+
+class WeakPasswordError(BadRequest):
+    """Raised by the model when a new password breaks the rule. It is a 400, so the
+    API sends back {"message": PASSWORD_RULE} without any route handling it."""
+    description = PASSWORD_RULE
+
+
+def meets_password_rule(password):
+    """True when a plaintext password follows PASSWORD_RULE."""
+    return (isinstance(password, str) and len(password) >= 8
+            and all(re.search(check, password) for check in _PASSWORD_CHECKS))
+
 
 """ Helper Functions """
 
@@ -20,14 +43,14 @@ def default_year():
     # If current month is between August (8) and December (12), the enrollment year is next year.
     if 7 <= current_month <= 12:
         current_year = current_year + 1
-    return current_year 
+    return current_year
 
 """ Database Models """
 
 ''' Tutorial: https://www.sqlalchemy.org/library.html#tutorials, try to get into Python shell and follow along '''
 
 class UserSection(db.Model):
-    """ 
+    """
     UserSection Model
 
     A many-to-many relationship between the 'users' and 'sections' tables.
@@ -38,7 +61,7 @@ class UserSection(db.Model):
         year (Column): An integer representing the year the user enrolled with the section. Defaults to the current year.
     """
     __tablename__ = 'user_sections'
-    
+
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), primary_key=True)
     section_id = db.Column(db.Integer, db.ForeignKey('sections.id'), primary_key=True)
     year = db.Column(db.Integer)
@@ -48,7 +71,7 @@ class UserSection(db.Model):
     # Overlaps setting silences SQLAlchemy warnings about multiple relationship paths
     user = db.relationship("User", backref=db.backref("user_sections_rel", cascade="all, delete-orphan"), overlaps="sections")
     section = db.relationship("Section", backref=db.backref("section_users_rel", cascade="all, delete-orphan"), overlaps="users")
-    
+
     def __init__(self, user, section):
         self.user = user
         self.section = section
@@ -58,9 +81,9 @@ class UserSection(db.Model):
 class Section(db.Model):
     """
     Section Model
-    
+
     The Section class represents a section within the application, such as a class, department or group.
-    
+
     Attributes:
         id (db.Column): The primary key, an integer representing the unique identifier for the section.
         _name (db.Column): A string representing the name of the section. It is not unique and cannot be null.
@@ -71,18 +94,18 @@ class Section(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     _name = db.Column(db.String(255), unique=False, nullable=False)
     _abbreviation = db.Column(db.String(255), unique=True, nullable=False)
-  
+
     # Define many-to-many relationship with User model through UserSection table
     # Overlaps setting silences SQLAlchemy warnings about multiple relationship paths
     # No backref needed as User has its own 'sections' relationship
     users = db.relationship('User', secondary='user_sections', lazy='subquery',
-                            overlaps="user_sections_rel,user,sections")    
-    
+                            overlaps="user_sections_rel,user,sections")
+
     # Constructor
     def __init__(self, name, abbreviation):
-        self._name = name 
+        self._name = name
         self._abbreviation = abbreviation
-        
+
     @property
     def abbreviation(self):
         return self._abbreviation
@@ -108,7 +131,7 @@ class Section(db.Model):
             "name": self._name,
             "abbreviation": self._abbreviation
         }
-        
+
     # CRUD delete: remove self
     # None
     def delete(self):
@@ -136,7 +159,6 @@ class User(db.Model, UserMixin):
         _password (Column): A string representing the hashed password of the user. It is not unique and cannot be null.
         _role (Column): A string representing the user's role within the application. Defaults to "User".
         _pfp (Column): A string representing the path to the user's profile picture. It can be null.
-        kasm_server_needed (Column): A boolean indicating whether the user requires a Kasm server.
         sections (Relationship): A many-to-many relationship between users and sections, allowing users to be associated with multiple sections.
         _grade_data (Column): A JSON object representing the user's grade data.
         _ap_exam (Column): A JSON object representing the user's AP exam data.
@@ -152,31 +174,44 @@ class User(db.Model, UserMixin):
     _password = db.Column(db.String(255), unique=False, nullable=False)
     _role = db.Column(db.String(20), default="User", nullable=False)
     _pfp = db.Column(db.String(255), unique=False, nullable=True)
-    kasm_server_needed = db.Column(db.Boolean, default=False)
     _grade_data = db.Column(db.JSON, unique=False, nullable=True)
     _ap_exam = db.Column(db.JSON, unique=False, nullable=True)
     _class = db.Column(db.JSON, unique=False, nullable=True)
     _school = db.Column(db.String(255), default="Unknown", nullable=True)
+    _game_profile = db.Column(db.JSON, unique=False, nullable=True)
+    # Bumped every time the password actually changes (set_password). Embedded in issued
+    # JWTs and in the Flask-Login session id (see get_id) and checked on every request, so
+    # a stolen JWT or session cookie stops working the moment this account's password is
+    # reset, instead of staying valid for the rest of its lifetime.
+    token_version = db.Column(db.Integer, default=0, nullable=False)
+    # Account lifecycle. New accounts are inactive until explicitly verified.
+    # An existing database needs this once, BEFORE this code is deployed (db.create_all()
+    # does not add columns to an existing table). The UPDATE keeps every existing account
+    # active, and due for re-verification in January:
+    #   ALTER TABLE users ADD COLUMN active BOOLEAN NOT NULL DEFAULT 0;
+    #   ALTER TABLE users ADD COLUMN last_verified DATETIME NULL;
+    #   UPDATE users SET active = 1, last_verified = '2026-01-30 00:00:00';
+    active = db.Column(db.Boolean, default=False, nullable=False)
+    last_verified = db.Column(db.DateTime, nullable=True)
 
     # Define many-to-many relationship with Section model through UserSection table
     # Overlaps setting silences SQLAlchemy warnings about multiple relationship paths
     # No backref needed as Section has its own 'users' relationship
     sections = db.relationship('Section', secondary='user_sections', lazy='subquery',
                                overlaps="user_sections_rel,section,users")
-    
+
     # Define many-to-many relationship with Persona model through UserPersona table
     # Overlaps setting silences SQLAlchemy warnings about multiple relationship paths
     # No backref needed as Persona has its own 'users' relationship
     personas = db.relationship('Persona', secondary='user_personas', lazy='subquery',
                                overlaps="user_personas_rel,persona,users")
-    
-    def __init__(self, name, uid, password=app.config["DEFAULT_PASSWORD"], kasm_server_needed=False, role="User", pfp='', grade_data=None, ap_exam=None, school="Unknown", sid=None, classes=None):
+
+    def __init__(self, name, uid, password=app.config["DEFAULT_PASSWORD"], role="User", pfp='', grade_data=None, ap_exam=None, school="Unknown", sid=None, classes=None, game_profile=None):
         self._name = name
         self._uid = uid
         self._email = "?"
         self._sid = sid
         self.set_password(password)
-        self.kasm_server_needed = kasm_server_needed
         self._role = role
         self._pfp = pfp
         self._grade_data = grade_data if grade_data else {}
@@ -185,10 +220,14 @@ class User(db.Model, UserMixin):
         # keep it as a JSON column in the DB
         self._class = classes if classes is not None else []
         self._school = school
+        self._game_profile = game_profile if game_profile else None
 
-    # UserMixin/Flask-Login requires a get_id method to return the id as a string
+    # UserMixin/Flask-Login requires a get_id method to return the id as a string.
+    # Composite id (id:token_version) so load_user (main.py) can reject a session cookie
+    # whose token_version doesn't match the account's current one -- see token_version
+    # column comment above.
     def get_id(self):
-        return str(self.id)
+        return f"{self.id}:{self.token_version}"
 
     # UserMixin/Flask-Login requires is_authenticated to be defined
     @property
@@ -204,19 +243,19 @@ class User(db.Model, UserMixin):
     @property
     def is_anonymous(self):
         return False
-    
+
     # validate uid is a unique GitHub username
     @property
     def email(self):
         return self._email
-    
+
     @email.setter
     def email(self, email):
         if email is None or email == "":
             self._email = "?"
         else:
             self._email = email
-        
+
     def set_email(self):
         """Set the email of the user based on the UID, the GitHub username."""
         data, status = GitHubUser().get(self._uid)
@@ -266,13 +305,22 @@ class User(db.Model, UserMixin):
 
     # set password, this is conventional setter with business logic
     def set_password(self, password):
-        """Set password: hash if not already hashed, else set directly."""
+        """Set password: hash if not already hashed, else set directly.
+        A new plaintext password must follow PASSWORD_RULE or WeakPasswordError is raised."""
         if password and password.startswith("pbkdf2:sha256:"):
-            # Already hashed, set directly
-            self._password = password
+            # Already hashed (backup restore, bulk import), set directly
+            new_hash = password
         else:
+            if not meets_password_rule(password):
+                raise WeakPasswordError()
             # Not hashed, hash it
-            self._password = generate_password_hash(password, "pbkdf2:sha256", salt_length=10)            
+            new_hash = generate_password_hash(password, "pbkdf2:sha256", salt_length=10)
+
+        # Only bump on an actual change, so idempotent operations (e.g. re-importing the
+        # same hash during a data restore) don't needlessly invalidate live sessions/JWTs.
+        if new_hash != self._password:
+            self.token_version = (self.token_version or 0) + 1
+        self._password = new_hash
 
     # check password parameter versus stored/encrypted password
     def is_password(self, password):
@@ -294,11 +342,98 @@ class User(db.Model, UserMixin):
         self._role = role
 
     def is_admin(self):
-        return self._role == "Admin"
+        return self._role == account_types.admin_role()
 
     def is_teacher(self):
         return self._role == "Teacher"
-    
+
+    def is_staff(self):
+        """True for the roles that manage accounts (staff_roles in account_types.json)."""
+        return self.role in account_types.staff_roles()
+
+    @property
+    def verification_state(self):
+        if not self.active:
+            return "inactive"
+        if self.role in account_types.verification_exempt_roles():
+            return "active_verified"  # never re-verified
+        if self.last_verified is None or datetime.utcnow() - self.last_verified >= timedelta(days=account_types.verification_interval_days()):
+            return "active_verification_required"
+        return "active_verified"
+
+    def activate(self, days=None):
+        """Verify the account: mark it active and record when. days is how long the verification
+        should last, up to the full interval; without it, the full interval."""
+        interval = account_types.verification_interval_days()
+        used = interval if days is None else min(days, interval)
+        self.active = True
+        self.last_verified = datetime.utcnow() - timedelta(days=interval - used)
+        db.session.commit()
+        return self
+
+    def deactivate(self):
+        """Mark the account inactive. The account, its data and last_verified are kept."""
+        self.active = False
+        db.session.commit()
+        return self
+
+    def is_last_active_essential(self):
+        """True when this is the only active account of a role the system must keep."""
+        return (self.active and self.role in account_types.essential_roles()
+                and User.query.filter_by(_role=self.role, active=True).count() == 1)
+
+    def deactivation_blocker(self, actor):
+        """None if actor may deactivate this account, else (HTTP status, reason)."""
+        if self.is_admin() and not actor.is_admin():
+            return 403, "Only an Admin can deactivate an Admin"
+        if self.is_last_active_essential():
+            return 409, f"At least one active {self.role} account must remain"
+        return None
+
+    def role_editable_by(self, actor):
+        """True when actor may change this account's role at all: not their own, and only an
+        Admin may change an Admin's. Whatever role the account has now."""
+        return self.id != actor.id and (actor.is_admin() or not self.is_admin())
+
+    def grantable_roles(self):
+        """The roles this account may give to another account. Only an Admin may grant Admin."""
+        return tuple(r for r in account_types.assignable_roles() if r != account_types.admin_role() or self.is_admin())
+
+    def role_change_blocker(self, actor, new_role):
+        """None if actor may set this account's role to new_role, else (HTTP status, reason)."""
+        if new_role not in account_types.assignable_roles():
+            return 400, f"role must be one of: {', '.join(account_types.assignable_roles())}"
+        if self.id == actor.id:
+            return 403, "You cannot change your own role"
+        if not self.role_editable_by(actor) or new_role not in actor.grantable_roles():
+            return 403, "Only an Admin can change an Admin's role or make someone an Admin"
+        if new_role != self.role and self.is_last_active_essential():
+            return 409, f"At least one active {self.role} account must remain"
+        return None
+
+    def deletion_blocker(self, actor):
+        """None if actor may delete this account, else (HTTP status, reason)."""
+        if not (actor.is_admin() and actor.active):
+            return 403, "Only an active Admin can delete accounts"
+        if self.id == actor.id:
+            return 403, "You cannot delete your own account; another Admin must do it"
+        if self.is_last_active_essential():
+            return 409, f"At least one active {self.role} account must remain"
+        return None
+
+    @property
+    def verification_due(self):
+        """True while the account is inactive or its verification has lapsed."""
+        return self.verification_state != "active_verified"
+
+    @property
+    def verification_prompt_days(self):
+        """The suggested days to ask a Teacher/Admin for when they activate this account, or None
+        when the answer is not theirs to choose (a fixed period, or a role never re-verified)."""
+        if account_types.fixed_verification_days(self.role) is not None:
+            return None
+        return account_types.default_verification_days()
+
     # getter method for profile picture
     @property
     def pfp(self):
@@ -341,6 +476,98 @@ class User(db.Model, UserMixin):
     def school(self, school):
         self._school = school
 
+    @property
+    def game_profile(self):
+        return self._game_profile
+
+    @game_profile.setter
+    def game_profile(self, game_profile):
+        self._game_profile = game_profile
+
+    def save_game_profile(self, game_profile):
+        """Create or replace the user's game profile and persist to DB."""
+        from sqlalchemy.orm.attributes import flag_modified
+        self._game_profile = game_profile
+        flag_modified(self, '_game_profile')
+        try:
+            db.session.commit()
+            return self._game_profile
+        except Exception:
+            db.session.rollback()
+            return None
+
+    def update_game_profile(self, incoming):
+        """
+        Deep-merge incoming game profile data into the existing record.
+
+        Returns the merged profile, or None on DB error.
+        Raises ValueError if incoming eventId is older than stored.
+        """
+        from sqlalchemy.orm.attributes import flag_modified
+
+        existing = self._game_profile or {}
+
+        # Event-ID conflict guard (prefer eventId over lastModified timestamps)
+        incoming_ev = incoming.get('eventId', 0)
+        existing_ev = existing.get('eventId', 0)
+        if incoming_ev and incoming_ev < existing_ev:
+            raise ValueError('stale')
+
+        # Deep merge: top-level keys from incoming win, then per-level sub-merge
+        merged = {**existing, **incoming}
+        for level in ('identity-forge', 'wayfinding-world', 'mission-tooling'):
+            if level in incoming and level in existing:
+                el = existing[level]
+                il = incoming[level]
+                merged[level] = {
+                    **el,
+                    **il,
+                    'preferences': {**(el.get('preferences') or {}), **(il.get('preferences') or {})},
+                    'progress':    {**(el.get('progress')    or {}), **(il.get('progress')    or {})},
+                }
+
+        self._game_profile = merged
+        flag_modified(self, '_game_profile')
+        try:
+            db.session.commit()
+            return self._game_profile
+        except Exception:
+            db.session.rollback()
+            return None
+
+    def clear_game_profile(self):
+        """Reset game progress while preserving identity metadata."""
+        from sqlalchemy.orm.attributes import flag_modified
+        existing = self._game_profile or {}
+        self._game_profile = {
+            'version': '1.0',
+            'localId': existing.get('localId'),
+            'createdAt': existing.get('createdAt'),
+            'updatedAt': None,
+            'eventId': 0,
+            'identity-forge': {
+                'preferences': {},
+                'progress': {'identityUnlocked': False, 'avatarSelected': False},
+                'completedAt': None,
+            },
+            'wayfinding-world': {
+                'preferences': {},
+                'progress': {'worldThemeSelected': False, 'navigationComplete': False},
+                'completedAt': None,
+            },
+            'mission-tooling': {
+                'progress': {'toolsUnlocked': False},
+                'completedAt': None,
+            },
+        }
+        flag_modified(self, '_game_profile')
+        try:
+            db.session.commit()
+            return self._game_profile
+        except Exception:
+            db.session.rollback()
+            return None
+
     # CRUD create/add a new record to the table
     # returns self or None on error
     def create(self, inputs=None):
@@ -366,18 +593,21 @@ class User(db.Model, UserMixin):
             "role": self.role,
             "pfp": self.pfp,
             "class": self._class if self._class is not None else [],
-            "kasm_server_needed": self.kasm_server_needed,
             "grade_data": self.grade_data,
             "ap_exam": self.ap_exam,
             "password": self._password,  # Only for internal use, not for API
-            "school": self.school
+            "school": self.school,
+            "game_profile": self.game_profile,
+            "active": self.active,
+            "last_verified": self.last_verified.isoformat() if self.last_verified else None,
+            "verification_state": self.verification_state,
         }
         sections = self.read_sections()
         data.update(sections)
         personas = self.read_personas()
         data.update(personas)
         return data
-        
+
     # CRUD update: updates user name, password, phone
     # returns self
     def update(self, inputs):
@@ -390,15 +620,13 @@ class User(db.Model, UserMixin):
         sid = inputs.get("sid", "")
         password = inputs.get("password", "")
         pfp = inputs.get("pfp", None)
-        kasm_server_needed = inputs.get("kasm_server_needed", None)
         grade_data = inputs.get("grade_data", None)
         ap_exam = inputs.get("ap_exam", None)
         class_list = inputs.get("class", None) or inputs.get("_class", None)
         school = inputs.get("school", None)
-        # States before update
-        old_uid = self.uid
-        old_kasm_server_needed = self.kasm_server_needed
-
+        # Password goes first: if the model rejects it, nothing else has changed yet.
+        if password:
+            self.set_password(password)
         # Update table with new data
         if name:
             self.name = name
@@ -408,12 +636,8 @@ class User(db.Model, UserMixin):
             self.email = email
         if sid:
             self.sid = sid
-        if password:
-            self.set_password(password)
         if pfp is not None:
             self.pfp = pfp
-        if kasm_server_needed is not None:
-            self.kasm_server_needed = bool(kasm_server_needed)
         if grade_data is not None:
             self.grade_data = grade_data
         if ap_exam is not None:
@@ -426,33 +650,14 @@ class User(db.Model, UserMixin):
                 self._class = class_list
         if school is not None:
             self.school = school
+        game_profile = inputs.get("game_profile", None)
+        if game_profile is not None:
+            self.game_profile = game_profile
 
         # Check this on each update
         if not email:
             if email == "?":
                 self.set_email()
-
-        # Make a KasmUser object to interact with the Kasm API
-        # Wrap in try-except to ensure db.session.commit() occurs even if Kasm operations fail
-        try:
-            kasm_user = KasmUser()
-
-            # Update Kasm server group membership if needed
-            if self.kasm_server_needed:
-                # UID has changed, delete old Kasm user if it exists
-                if old_uid != self.uid:
-                    kasm_user.delete(old_uid)
-                # Create or update the user in Kasm, including a password
-                kasm_user.post(self.name, self.uid, password if password else app.config["DEFAULT_PASSWORD"])
-                # User is transtioning from non-Kasm to Kasm user, thus it requires posting all groups to Kasm
-                if not old_kasm_server_needed:
-                    kasm_user.post_groups(self.uid, [section.abbreviation for section in self.sections])
-            # User is transitioning from Kasm user to non-Kasm user, thus it requires cleanup of defunct Kasm user
-            elif old_kasm_server_needed:
-                kasm_user.delete(self.uid)
-        except Exception as e:
-            # Log the error but continue to db.session.commit()
-            print(f"Kasm API error for user {self.uid}: {e}")
 
         try:
             db.session.commit()
@@ -460,18 +665,17 @@ class User(db.Model, UserMixin):
             db.session.rollback()
             return None
         return self
-    
+
     # CRUD delete: remove self
     # None
     def delete(self):
         try:
-            KasmUser().delete(self.uid)
             db.session.delete(self)
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
-        return None   
-    
+        return None
+
     def save_pfp(self, image_data, filename):
         """For saving profile picture."""
         try:
@@ -484,32 +688,29 @@ class User(db.Model, UserMixin):
             self.update({"pfp": filename})
         except Exception as e:
             raise e
-        
+
     def delete_pfp(self):
         """Deletes profile picture from user record."""
         self.pfp = None
         db.session.commit()
-        
+
     def add_section(self, section):
         # Query for the section using the provided abbreviation
         found = any(s.id == section.id for s in self.sections)
-        
+
         # Check if the section was found
         if not found:
             # Add the section to the user's sections
             user_section = UserSection(user=self, section=section)
             db.session.add(user_section)
-            
+
             # Commit the changes to the database
             db.session.commit()
         else:
             # Handle the case where the section exists
             print("Section with abbreviation '{}' exists.".format(section._abbreviation))
-        # update kasm group membership
-        if self.kasm_server_needed:
-            KasmUser().post_groups(self.uid, [section.abbreviation])
         return self
-    
+
     def add_sections(self, sections):
         """
         Add multiple sections to the user's profile.
@@ -528,20 +729,20 @@ class User(db.Model, UserMixin):
             self.add_section(section_obj)
         # Return the user object with the added sections
         return self
-        
+
     def read_sections(self):
         """Reads the sections associated with the user."""
         sections = []
-        # The user_sections_rel backref provides access to the many-to-many relationship data 
+        # The user_sections_rel backref provides access to the many-to-many relationship data
         if self.user_sections_rel:
             for user_section in self.user_sections_rel:
-                # This user_section backref "row" can be used to access section methods 
+                # This user_section backref "row" can be used to access section methods
                 section_data = user_section.section.read()
-                # Extract the year from the relationship data  
-                section_data['year'] = user_section.year  
+                # Extract the year from the relationship data
+                section_data['year'] = user_section.year
                 sections.append(section_data)
-        return {"sections": sections} 
-    
+        return {"sections": sections}
+
     def read_personas(self):
         """Reads the personas associated with the user."""
         personas = []
@@ -551,7 +752,7 @@ class User(db.Model, UserMixin):
             for user_persona in self.user_personas_rel:
                 personas.append(user_persona.read())
         return {"personas": personas}
-    
+
     def update_section(self, section_data):
         """
         Updates the year enrolled for a given section.
@@ -575,7 +776,7 @@ class User(db.Model, UserMixin):
             return True  # Update successful
         else:
             return False  # Section not found
-    
+
     def remove_sections(self, section_abbreviations):
         """
         Remove sections based on provided abbreviations.
@@ -606,7 +807,7 @@ class User(db.Model, UserMixin):
             db.session.rollback()
             print(f"Unexpected error removing sections: {e}") # Log the unexpected error
             return False
-        
+
     def set_uid(self, new_uid=None):
         """
         Update the user's directory based on the new UID provided.
@@ -637,7 +838,7 @@ def initUsers():
         """Create database and tables"""
         db.create_all()
         """Tester data for table"""
-        
+
         default_grade_data = {
             'grade': 'A',
             'attendance': 5,
@@ -673,14 +874,16 @@ def initUsers():
             'last_updated': None
         }
 
-        u1 = User(name=app.config['ADMIN_USER'], uid=app.config['ADMIN_UID'], password=app.config['ADMIN_PASSWORD'], pfp=app.config['ADMIN_PFP'], kasm_server_needed=True, role="Admin")
+        u1 = User(name=app.config['ADMIN_USER'], uid=app.config['ADMIN_UID'], password=app.config['ADMIN_PASSWORD'], pfp=app.config['ADMIN_PFP'], role=account_types.admin_role())
         u2 = User(name=app.config['USER_NAME'], uid=app.config['USER_UID'], password=app.config['USER_PASSWORD'], pfp=app.config['USER_PFP'])
         u3 = User(name=app.config['TEACHER_USER'], uid=app.config['TEACHER_UID'], pfp=app.config['TEACHER_PFP'], password=app.config['TEACHER_PASSWORD'], role='Teacher')
         u4 = User(name=app.config['MY_NAME'], uid=app.config['MY_UID'], pfp=app.config['MY_PFP'], password=app.config['MY_PASSWORD'], role=app.config['MY_ROLE'])
 
         users = [u1, u2, u3, u4]
-        
+
         for user in users:
+            user.active = True
+            user.last_verified = datetime.utcnow()
             try:
                 user.create()
             except IntegrityError:
@@ -692,16 +895,17 @@ def initUsers():
         s2 = Section(name='Computer Science Principles', abbreviation='CSP')
         s3 = Section(name='Engineering Robotics', abbreviation='Robotics')
         s4 = Section(name='Computer Science and Software Engineering', abbreviation='CSSE')
-        sections = [s1, s2, s3, s4]
-        
+        s5 = Section(name='Computer Science Honors', abbreviation='CSH')
+        sections = [s1, s2, s3, s4, s5]
+
         for section in sections:
             try:
-                section.create()    
+                section.create()
             except IntegrityError:
                 '''fails with bad or duplicate data'''
                 db.session.remove()
                 print(f"Records exist, duplicate email, or error: {section.name}")
-            
+
         u1.add_section(s1)
         u1.add_section(s2)
         u2.add_section(s2)
