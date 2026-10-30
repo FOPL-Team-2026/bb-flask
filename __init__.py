@@ -42,7 +42,7 @@ cors = CORS(
        'http://localhost:4000',
        'http://127.0.0.1:4000',
        'https://open-coding-society.github.io',
-       'https://pages.opencodingsociety.com',
+       'https://pages.opencodingsociety.com', 'https://fopl-team-2026.github.io',
        'http://fopl.opencodingsociety.com',
        'https://fopl.opencodingsociety.com',
        'http://www.fopl.opencodingsociety.com',
@@ -63,7 +63,7 @@ def handle_preflight():
             'http://localhost:4600', 'http://127.0.0.1:4600',
             'http://localhost:4000', 'http://127.0.0.1:4000',
             'https://open-coding-society.github.io',
-            'https://pages.opencodingsociety.com',
+            'https://pages.opencodingsociety.com', 'https://fopl-team-2026.github.io',
             'http://fopl.opencodingsociety.com',
             'https://fopl.opencodingsociety.com',
         ]
