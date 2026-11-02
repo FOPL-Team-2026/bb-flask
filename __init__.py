@@ -28,46 +28,34 @@ app.config['JSON_AS_ASCII'] = False  # Allow emojis, non-ASCII characters in JSO
 login_manager = LoginManager()
 login_manager.init_app(app)
 
-# Allowed servers for cross-origin resource sharing (CORS)
+# Keep preflight and actual responses on the same explicit origin allowlist.
+FOPL_ALLOWED_ORIGINS = [
+    'http://localhost:4500', 'http://127.0.0.1:4500',
+    'http://localhost:4599', 'http://127.0.0.1:4599',
+    'http://localhost:4600', 'http://127.0.0.1:4600',
+    'http://localhost:4000', 'http://127.0.0.1:4000',
+    'https://open-coding-society.github.io',
+    'https://pages.opencodingsociety.com',
+    'https://fopl-team-2026.github.io',
+    'http://fopl.opencodingsociety.com',
+    'https://fopl.opencodingsociety.com',
+    'http://www.fopl.opencodingsociety.com',
+    'https://www.fopl.opencodingsociety.com',
+]
+
 cors = CORS(
-   app,
-   supports_credentials=True,
-   origins=[
-       'http://localhost:4500',
-       'http://127.0.0.1:4500',
-       'http://localhost:4599',
-       'http://127.0.0.1:4599',
-       'http://localhost:4600',
-       'http://127.0.0.1:4600',
-       'http://localhost:4000',
-       'http://127.0.0.1:4000',
-       'https://open-coding-society.github.io',
-       'https://pages.opencodingsociety.com',
-       'http://fopl.opencodingsociety.com',
-       'https://fopl.opencodingsociety.com',
-       'http://www.fopl.opencodingsociety.com',
-       'https://www.fopl.opencodingsociety.com',
-   ],
-   methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    app,
+    supports_credentials=True,
+    origins=FOPL_ALLOWED_ORIGINS,
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 )
 
-# Nginx and Flask-CORS can both set Access-Control-Allow-Origin, causing a duplicate
-# header that browsers reject. Strip any extras so exactly one value is sent.
+
 @app.before_request
 def handle_preflight():
     if request.method == 'OPTIONS':
         origin = request.headers.get('Origin', '')
-        allowed = [
-            'http://localhost:4500', 'http://127.0.0.1:4500',
-            'http://localhost:4599', 'http://127.0.0.1:4599',
-            'http://localhost:4600', 'http://127.0.0.1:4600',
-            'http://localhost:4000', 'http://127.0.0.1:4000',
-            'https://open-coding-society.github.io',
-            'https://pages.opencodingsociety.com',
-            'http://fopl.opencodingsociety.com',
-            'https://fopl.opencodingsociety.com',
-        ]
-        if origin in allowed:
+        if origin in FOPL_ALLOWED_ORIGINS:
             resp = make_response('', 204)
             resp.headers['Access-Control-Allow-Origin'] = origin
             resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
