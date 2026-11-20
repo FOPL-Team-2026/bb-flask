@@ -41,6 +41,10 @@ FOPL_ALLOWED_ORIGINS = [
     'https://fopl.opencodingsociety.com',
     'http://www.fopl.opencodingsociety.com',
     'https://www.fopl.opencodingsociety.com',
+    
+    'https://fopl2026.opencodingsociety.com',
+    'http://fopl2026.opencodingsociety.com',
+
 ]
 
 cors = CORS(
